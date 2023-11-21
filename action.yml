@@ -1,0 +1,63 @@
+name: Run PHP lint
+
+on:
+  workflow_call:
+
+inputs:
+  php-versions:
+    required: true
+    description: |
+      Project PHP versions to test
+      Default: '["latest"]'
+      Example for multiple version: '["8.1", "8.2", "latest"]'
+    default: '["latest"]'
+
+jobs:
+  php-lint:
+    runs-on: ubuntu-latest
+
+    outputs:
+      changes: ${{ steps.guard.outputs.has_changes }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php-versions: ${{ fromJSON( input.php-version ) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard against no PHP changes
+        id: guard
+        run: |
+          if [[ -z $(git diff --name-only --diff-filter=d origin/main...HEAD | grep '\.php$') ]]; then
+            echo "HAS_CHANGES=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "HAS_CHANGES=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup PHP
+        if: ${{ steps.guard.outputs.HAS_CHANGES == 'true' }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-versions }}
+          coverage: none
+          tools: cs2pr, parallel-lint
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run PHP lint check on changed files
+        if: ${{ steps.guard.outputs.HAS_CHANGES == 'true' }}
+        run: |
+          git diff --name-only --diff-filter=d origin/main...HEAD | grep '\.php$' | \
+            parallel-lint \
+              --stdin \
+              --no-progress \
+              --exclude vendor \
+              --exclude reports \
+              --show-deprecated \
+              --checkstyle | \
+            cs2pr
